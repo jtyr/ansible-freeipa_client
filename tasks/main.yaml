@@ -1,0 +1,89 @@
+---
+
+- name: Test distribution
+  assert:
+    that: >
+      ansible_os_family == 'RedHat' or
+      ansible_os_family == 'Debian'
+
+- name: Install FreeIPA client package
+  package:
+    name: "{{ freeipa_client_pkg }}"
+  tags:
+    - freeipa_client_pkg
+
+- name: Check if FreeIPA client is already installed
+  ipa_client_check:
+  register: freeipa_client_check
+  tags:
+    - freeipa_client_reg
+
+- name: Uninstall FreeIPA client
+  shell: ipa-client-install --uninstall --unattended
+  when: >
+    freeipa_client_reg_force == true and
+    freeipa_client_check is defined and
+    freeipa_client_check.installed
+  tags:
+    - freeipa_client_reg
+
+- name: Register FreeIPA client with the server
+  shell: ipa-client-install {{ freeipa_client_reg_args | join(' ') }}
+  register: freeipa_client_reg_result
+  no_log: "{{ not freeipa_client_reg_log }}"
+  when: >
+    (
+      freeipa_client_check is defined and
+      not freeipa_client_check.installed
+    ) or (
+      freeipa_client_reg_force
+    )
+  tags:
+    - freeipa_client_reg
+
+- name: Install mkhomedir PAM config
+  copy:
+    src: mkhomedir
+    dest: /usr/share/pam-configs/mkhomedir
+  when: >
+    (
+      freeipa_client_pam_mkhomedir_install == None and
+      ansible_os_family == 'Debian'
+    ) or (
+      freeipa_client_pam_mkhomedir_install == true
+    )
+  tags:
+    - freeipa_client_auth
+
+- name: Remove mkhomedir from the seen file
+  lineinfile:
+    path: /var/lib/pam/seen
+    regexp: "^mkhomedir$"
+    state: absent
+  when: >
+    ansible_os_family == 'Debian' and
+    (
+      (
+        freeipa_client_reg_result is defined and
+        freeipa_client_reg_result.changed
+      ) or (
+        freeipa_client_reg_result is not defined
+      )
+    )
+  tags:
+    - freeipa_client_auth
+
+- name: Update PAM auth
+  shell: pam-auth-update --package
+  when: >
+    ansible_os_family == 'Debian' and
+    (
+      (
+        freeipa_client_reg_result is defined and
+        freeipa_client_reg_result.changed
+      ) or (
+        freeipa_client_reg_result is not defined
+      )
+    )
+  tags:
+    - freeipa_client_auth
